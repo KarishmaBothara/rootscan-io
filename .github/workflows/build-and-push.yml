@@ -1,0 +1,207 @@
+name: "Build and Push Docker Image"
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "package*.json"
+      - "tsconfig.json"
+      - "block-explorer-indexer/Dockerfile"
+      - ".github/workflows/build-and-push.yml"
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Custom image tag after the build"
+        required: false
+        type: string
+      environment:
+        description: "Target Environment"
+        required: true
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+        default: "development"
+  workflow_call:
+    inputs:
+      image_tag:
+        required: false
+        type: string
+      environment:
+        required: false
+        type: string
+        default: "development"
+    outputs:
+      image_full_name:
+        description: "Full name of the built image including tag"
+        value: ${{ jobs.build-and-push.outputs.image_full_name }}
+      image_tag:
+        description: "Image tag"
+        value: ${{ jobs.build-and-push.outputs.image_tag }}
+
+env:
+  REGISTRY: "ghcr.io"
+  IMAGE_NAME: "ghcr.io/karishmabothara/rootscan-indexer"
+  DOCKER_FILE: "./Dockerfile"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript build
+        run: npm run build
+
+      - name: Run code formatting check
+        run: npm run format -- --check
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    # Skip if it's a PR (only run tests for PRs)
+    if: github.event_name != 'pull_request'
+    environment: ${{ inputs.environment || 'development' }}
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+      id-token: write  # Required for artifact attestation
+      attestations: write  # Required for artifact attestation
+    outputs:
+      image_full_name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract-tag.outputs.tag }}
+      image_tag: ${{ steps.extract-tag.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript build
+        run: npm run build
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-flags: --debug
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
+            type=sha,prefix=${{ inputs.environment || 'development' }}-,format=short,enable=true
+            type=ref,event=tag,prefix=${{ inputs.environment || 'development' }}-,enable=true
+            type=ref,event=branch,prefix=${{ inputs.environment || 'development' }}-,enable=true
+            type=raw,value=${{ inputs.environment || 'development' }}-${{ inputs.image_tag }},enable=${{ inputs.image_tag != '' }}
+            type=raw,value=${{ inputs.environment || 'development' }}-latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ env.DOCKER_FILE }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract tag
+        id: extract-tag
+        run: |
+          # Get the first tag and extract just the tag part
+          FULL_TAG=$(echo "${{ steps.meta.outputs.tags }}" | tr ' ' '\n' | head -n 1)
+          TAG=${FULL_TAG#${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:}
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Extracted tag: $TAG"
+
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  security-scan:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    env:
+      REGISTRY: "ghcr.io"
+      IMAGE_NAME: "ghcr.io/karishmabothara/rootscan-indexer"
+    permissions:
+      contents: read
+      security-events: write
+      packages: read  # Required to pull images from GHCR
+
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+          format: 'table'  # Changed from 'sarif' to 'table' for console output
+
+      - name: Run Trivy vulnerability scanner (JSON output)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}
+          format: 'json'
+          output: 'trivy-results.json'
+
+      - name: Upload Trivy scan results as artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-security-results
+          path: trivy-results.json
