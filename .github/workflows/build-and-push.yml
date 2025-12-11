@@ -10,8 +10,7 @@ on:
     branches:
       - main
     paths:
-      - "src/**"
-      - "package*.json"
+      - "block-explorer-indexer/package.json"
       - "tsconfig.json"
       - "block-explorer-indexer/**"
       - ".github/workflows/build-and-push.yml"
