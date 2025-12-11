@@ -13,10 +13,14 @@ on:
       - "src/**"
       - "package*.json"
       - "tsconfig.json"
-      - "block-explorer-indexer"
+      - "block-explorer-indexer/**"
       - ".github/workflows/build-and-push.yml"
   workflow_dispatch:
     inputs:
+      token:
+        type: string
+        description: Deploy token, generate one with `repo` permission
+        required: true
       image_tag:
         description: "Custom image tag after the build"
         required: false
@@ -50,7 +54,7 @@ on:
 env:
   REGISTRY: "ghcr.io"
   IMAGE_NAME: "ghcr.io/karishmabothara/rootscan-indexer"
-  DOCKER_FILE: "./apps/block-explorer-indexer/Dockerfile"
+  DOCKER_FILE: "./block-explorer-indexer/Dockerfile"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
