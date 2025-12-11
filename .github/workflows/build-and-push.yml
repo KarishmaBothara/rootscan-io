@@ -13,7 +13,7 @@ on:
       - "src/**"
       - "package*.json"
       - "tsconfig.json"
-      - "block-explorer-indexer/Dockerfile"
+      - "block-explorer-indexer"
       - ".github/workflows/build-and-push.yml"
   workflow_dispatch:
     inputs:
@@ -50,7 +50,7 @@ on:
 env:
   REGISTRY: "ghcr.io"
   IMAGE_NAME: "ghcr.io/karishmabothara/rootscan-indexer"
-  DOCKER_FILE: "./Dockerfile"
+  DOCKER_FILE: "./apps/block-explorer-indexer/Dockerfile"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
