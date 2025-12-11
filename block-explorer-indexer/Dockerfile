@@ -10,7 +10,7 @@ RUN pnpm install --frozen-lockfile --unsafe-perm
 
 # https://pnpm.io/cli/fetch
 COPY . .
-
+RUN npm install -g pnpm
 RUN pnpm run build
 
 FROM node:20.15.1-alpine AS deps
