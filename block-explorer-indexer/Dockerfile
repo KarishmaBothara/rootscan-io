@@ -6,7 +6,7 @@ RUN npm install -g pnpm
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --unsafe-perm
+RUN pnpm install --frozen-lockfile
 
 # https://pnpm.io/cli/fetch
 COPY . .
@@ -23,7 +23,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY pnpm-lock.yaml package.json ./
-RUN pnpm install --prod --frozen-lockfile --no-optional --unsafe-perm
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
 FROM node:20.15.1-alpine AS runner
 
